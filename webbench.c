@@ -25,8 +25,6 @@
 #include <time.h>
 #include <signal.h>
 
-#define NGX_LOG_COLLECTION 1
-
 /* Allow: GET, HEAD, OPTIONS, TRACE */
 #define METHOD_GET 0
 #define METHOD_HEAD 1
@@ -38,7 +36,6 @@
 #define POST_SIZE 1024
 #define REQUEST_SIZE 2048
 #define MAX_BUF_SIZE 1500
-#define CLIENT_UUID_LEN 36
 
 /* values */
 volatile int timerexpired = 0;
@@ -407,32 +404,8 @@ void build_special_request(void)
 	header_t *header = &bench_params.header;
 
 	if (header->header) {
-#if defined NGX_LOG_COLLECTION
-		for (i = 0; i < header->count; i++) {
-			if (strcasecmp(header->header[i], "client-uuid") == 0) {
-				if (strlen(header->header_value[i]) == CLIENT_UUID_LEN
-					&& header->header_value[i][8] == '-'
-					&& header->header_value[i][13] == '-'
-					&& header->header_value[i][18] == '-'
-					&& header->header_value[i][23] == '-'
-				)
-				{
-					sprintf(header->header_value[i] + 24, "%d", getpid());
-					memset(header->header_value[i] + strlen(header->header_value[i]),
-						'0',
-						CLIENT_UUID_LEN - strlen(header->header_value[i]));
-					sprintf(request + strlen(request), "%s: %s\r\n",
-						header->header[i], header->header_value[i]);
-				}
-			} else {
-				sprintf(request + strlen(request), "%s: %s\r\n",
-						header->header[i], header->header_value[i]);
-			}
-		}
-#else
 		for (i = 0; i < header->count; i++)
 			sprintf(request + strlen(request), "%s: %s\r\n", header->header[i], header->header_value[i]);
-#endif
 	}
 
 	if (bench_params.post.post == 1) {
