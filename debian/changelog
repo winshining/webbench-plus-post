@@ -1,5 +1,9 @@
 webbench (1.6) unstable; urgency=low
 
+  * support multiple custom headers
+
+ -- https://github.com/winshining Sat, Mar 12 22:14 GMT 2017
+
   * support post testing and custom header
 
  -- https://github.com/winshining Sat, Mar 11 04:58 GMT 2017
