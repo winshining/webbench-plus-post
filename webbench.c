@@ -88,7 +88,7 @@ bench_params_t bench_params = {
 	0,
 	30,
 	{ 80, NULL },
-	{ 1, NULL },
+	{ 0, NULL },
 	{ 0, NULL, NULL }
 };
 
@@ -319,6 +319,7 @@ int main(int argc, char *argv[])
 				}
 	
 				bench_params.method = METHOD_POST;
+				bench_params.post.post = 1;
 				bench_params.post.content = optarg;
 		}
 	}
@@ -353,7 +354,7 @@ int main(int argc, char *argv[])
 			printf("TRACE");
 			break;
 		case METHOD_POST:
-			printf("POST"); bench_params.post.post = 1;
+			printf("POST");
 	}
 	
 	build_request(argv[optind]);
