@@ -381,6 +381,7 @@ int main(int argc, char *argv[])
 					goto failed;
 				}
 
+				bench_params.header.header[header_count - 1] = "Content-Type";
 				bench_params.header.header_value[header_count - 1] = (char *)POST_MIME_URLENCODED;
 			}
 		}
@@ -410,14 +411,14 @@ int main(int argc, char *argv[])
 			printf("TRACE");
 			break;
 		case METHOD_POST:
-			printf("POST ");
+			printf("POST");
 	}
 	
 	build_request(argv[optind]);
 	printf(" %s", argv[optind]);
 
 	if (!multipart) {
-		printf("Content-Type: %s", POST_MIME_URLENCODED);
+		printf(" Content-Type: %s", POST_MIME_URLENCODED);
 	} else {
 		bench_params.post.boundary = (char *)malloc(BOUNDARY_SIZE + 1);
 		if (bench_params.post.boundary == NULL) {
@@ -432,7 +433,7 @@ int main(int argc, char *argv[])
 		snprintf(bench_params.post.boundary + strlen(bench_params.post.boundary), 4, "%s", uuid + 14);
 		snprintf(bench_params.post.boundary + strlen(bench_params.post.boundary), 4, "%s", uuid + 19);
 		snprintf(bench_params.post.boundary + strlen(bench_params.post.boundary), 12, "%s", uuid + 24);
-		printf("Content-Type: %s%s", POST_MIME_MULTIFORM, bench_params.post.boundary);
+		printf(" Content-Type: %s%s", POST_MIME_MULTIFORM, bench_params.post.boundary);
 	}
 
 	switch(bench_params.http10) {
