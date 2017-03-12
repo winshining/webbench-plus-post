@@ -17,6 +17,7 @@
  * 
  */ 
 #include "socket.c"
+#include "uuid.c"
 #include <unistd.h>
 #include <sys/param.h>
 #include <rpc/types.h>
@@ -25,7 +26,7 @@
 #include <time.h>
 #include <signal.h>
 
-/* Allow: GET, HEAD, OPTIONS, TRACE */
+/* Allow: GET, POST, HEAD, OPTIONS, TRACE */
 #define METHOD_GET 0
 #define METHOD_HEAD 1
 #define METHOD_OPTIONS 2
@@ -33,9 +34,17 @@
 #define METHOD_POST 4
 #define PROGRAM_VERSION "1.6"
 
-#define POST_SIZE 1024
-#define REQUEST_SIZE 2048
-#define MAX_BUF_SIZE 1500
+#define POST_SIZE     1024
+#define REQUEST_SIZE  2048
+#define MAX_BUF_SIZE  1500
+#define BOUNDARY_SIZE 57
+
+#define POST_MIME_URLENCODED                    "application/x-www-form-urlencoded"
+#define POST_MIME_MULTIFORM                     "multipart/form-data; boundary="
+#define POST_CONTENT_DISPOSITION                "Content-Disposition: form-data; name=\"webbench\"; "
+#define POST_CONTENT_DISPOSITION_FILENAME_START "filename=\""
+#define POST_CONTENT_DISPOSITION_FILENAME_END   "\""
+#define POST_CONTENT_DISPOSITION_CONTENT_TYPE   "Content-Type: application/octet-stream" 
 
 /* values */
 volatile int timerexpired = 0;
@@ -48,6 +57,8 @@ typedef struct {
 
 typedef struct {
 	int post;
+	FILE *file;
+	char *boundary;
 	char *content;
 } post_t;
 
@@ -88,7 +99,7 @@ bench_params_t bench_params = {
 	0,
 	30,
 	{ 80, NULL },
-	{ 0, NULL },
+	{ 0, NULL, NULL, NULL },
 	{ 0, NULL, NULL }
 };
 
@@ -111,6 +122,7 @@ static const struct option long_options[] =
 	{"options",	no_argument,		&bench_params.method,		METHOD_OPTIONS},
 	{"trace",	no_argument,		&bench_params.method,		METHOD_TRACE},
 	{"post",	required_argument,	NULL,						'o'},
+	{"file",	no_argument,		NULL,						'i'},
 	{"header",	required_argument,	NULL,						'd'},
 	{"version",	no_argument,		NULL,						'V'},
 	{"proxy",	required_argument,	NULL,						'p'},
@@ -149,6 +161,7 @@ static void usage(void)
 	"  --options                Use OPTIONS request method.\n"
 	"  --trace                  Use TRACE request method.\n"
 	"  -o|--post                Use POST request method.\n"
+	"  -i|--file                Use multipart/form-data for POST request method.\n"
 	"  -d|--header <header:xxx> Specify custom header.\n"
 	"  -?|-h|--help             This information.\n"
 	"  -V|--version             Display program version.\n"
@@ -206,11 +219,19 @@ static void free_header(void)
 		free(bench_params.header.header_value);
 }
 
+static void free_boundary(void)
+{
+	if (bench_params.post.boundary)
+		free(bench_params.post.boundary);
+}
+
 int main(int argc, char *argv[])
 {
 	int opt = 0;
 	int i, header_count = 0;
 	int options_index = 0;
+	int multipart = 0;
+	char uuid[UUID_SIZE + 1];
 	char *tmp = NULL;
 	
 	if(argc == 1) {
@@ -314,13 +335,16 @@ int main(int argc, char *argv[])
 				break;
 			case 'o':
 				if (strlen(optarg) > POST_SIZE) {
-					fprintf(stderr, "Error in option --post %s: Content too large.\n", optarg);
+					fprintf(stderr, "Error in option --post %s: Content or file name too large.\n", optarg);
 					goto failed;
 				}
 	
 				bench_params.method = METHOD_POST;
 				bench_params.post.post = 1;
 				bench_params.post.content = optarg;
+				break;
+			case 'i':
+				multipart = 1;
 		}
 	}
 
@@ -328,6 +352,38 @@ int main(int argc, char *argv[])
 		fprintf(stderr, "webbench: Missing URL!\n");
 		usage();
 		goto failed;
+	}
+
+	if (multipart) {
+		if (!bench_params.post.post) {
+			fprintf(stderr, "Error in option -i|--file: --pos not specified.\n");
+			goto failed;
+		}
+
+		bench_params.post.file = fopen(bench_params.post.content, "r");
+		if (bench_params.post.file == NULL) {
+			fprintf(stderr, "Error in file open: %s.\n", bench_params.post.content);
+			goto failed;
+		}
+	} else {
+		if (bench_params.post.post) {
+			for (i = 0; i < bench_params.header.count; i++) {
+				if (strcasecmp(bench_params.header.header_value[i], POST_MIME_URLENCODED) == 0)
+					break;
+			}
+
+			if (i == bench_params.header.count) {
+				header_count++;
+
+				if (!init_header(header_count)) {
+					fprintf(stderr, "Error in option --header %s: Alloc for header failed.\n",
+							POST_MIME_URLENCODED);
+					goto failed;
+				}
+
+				bench_params.header.header_value[header_count - 1] = (char *)POST_MIME_URLENCODED;
+			}
+		}
 	}
 
 	/* Copyright */
@@ -354,11 +410,30 @@ int main(int argc, char *argv[])
 			printf("TRACE");
 			break;
 		case METHOD_POST:
-			printf("POST");
+			printf("POST ");
 	}
 	
 	build_request(argv[optind]);
 	printf(" %s", argv[optind]);
+
+	if (!multipart) {
+		printf("Content-Type: %s", POST_MIME_URLENCODED);
+	} else {
+		bench_params.post.boundary = (char *)malloc(BOUNDARY_SIZE + 1);
+		if (bench_params.post.boundary == NULL) {
+			fprintf(stderr, "Error in alloc for boundary.\n");
+			goto failed;
+		}
+
+		strcat(bench_params.post.boundary, "-------------------------");
+        random_uuid(uuid);
+		snprintf(bench_params.post.boundary + strlen(bench_params.post.boundary), 8, "%s", uuid);
+		snprintf(bench_params.post.boundary + strlen(bench_params.post.boundary), 4, "%s", uuid + 9);
+		snprintf(bench_params.post.boundary + strlen(bench_params.post.boundary), 4, "%s", uuid + 14);
+		snprintf(bench_params.post.boundary + strlen(bench_params.post.boundary), 4, "%s", uuid + 19);
+		snprintf(bench_params.post.boundary + strlen(bench_params.post.boundary), 12, "%s", uuid + 24);
+		printf("Content-Type: %s%s", POST_MIME_MULTIFORM, bench_params.post.boundary);
+	}
 
 	switch(bench_params.http10) {
 		case 0:
@@ -367,6 +442,11 @@ int main(int argc, char *argv[])
 	    case 2:
 			printf(" (using HTTP/1.1)");
 			break;
+	}
+
+	if (bench_params.http10 == 0 && bench_params.post.post) {
+		fprintf(stderr, "Error in HTTP support: HTTP/0.9 does not support POST method.\n");
+		goto failed;
 	}
 
 	printf("\n");
@@ -396,12 +476,16 @@ int main(int argc, char *argv[])
 	return bench();
 
 failed:
+	free_header();
+	free_boundary();
+
 	return 2;
 }
 
 void build_special_request(void)
 {
 	int i;
+	long cl;
 	header_t *header = &bench_params.header;
 
 	if (header->header) {
@@ -409,9 +493,43 @@ void build_special_request(void)
 			sprintf(request + strlen(request), "%s: %s\r\n", header->header[i], header->header_value[i]);
 	}
 
-	if (bench_params.post.post == 1) {
+	if (bench_params.post.post) {
+		if (!bench_params.post.file)
+			sprintf(request + strlen(request), "Content-Length: %ld\r\n", strlen(bench_params.post.content));
+		else {
+			fseek(bench_params.post.file, 0L, SEEK_END);
+
+			cl = BOUNDARY_SIZE + strlen("\r\n") /* first boundary */
+				+ strlen(POST_CONTENT_DISPOSITION)
+				+ strlen(POST_CONTENT_DISPOSITION_FILENAME_START)
+				+ strlen(bench_params.post.content)
+				+ strlen(POST_CONTENT_DISPOSITION_FILENAME_END)
+				+ strlen("\r\n") /* Content-Disposition */
+				+ strlen(POST_CONTENT_DISPOSITION_CONTENT_TYPE)
+				+ strlen("\r\n\r\n") /* Content-Type in Content-Disposition */
+				+ ftell(bench_params.post.file) /* file length */
+				+ strlen("\r\n")
+				+ BOUNDARY_SIZE
+				+ strlen("--\r\n"); /* last boundary */
+
+			if (strlen(request) + cl >= REQUEST_SIZE) {
+				fprintf(stderr, "Error in request size: %ld, overflowed.\n", strlen(request) + cl);
+
+				free_header();
+				free_boundary();
+				exit(2);
+			}
+
+			sprintf(request + strlen(request), "Content-Length: %ld\r\n", cl);
+			fseek(bench_params.post.file, 0L, SEEK_SET);
+		}
+
 		strcat(request, "\r\n");
-		memcpy(request + strlen(request), bench_params.post.content, strlen(bench_params.post.content));
+		if (!bench_params.post.file)
+			memcpy(request + strlen(request), bench_params.post.content, strlen(bench_params.post.content));
+		else {
+			;
+		}
 	}
 
 	free_header();
@@ -533,9 +651,6 @@ void build_request(const char *url)
 	if (bench_params.http10 > 1)
 	    strcat(request, "Connection: close\r\n");
 
-	if (bench_params.post.post)
-	    sprintf(request + strlen(request), "Content-Length: %ld\r\n", strlen(bench_params.post.content));
-
 	/* add empty line at end */
 	if (bench_params.http10 > 0 && !bench_params.post.post)
 		strcat(request, "\r\n"); 
@@ -614,8 +729,10 @@ static int bench(void)
 		fclose(f);
 		return 0;
 	} else {
-		if (i == bench_params.clients)
+		if (i == bench_params.clients){
 			free_header();
+			free_boundary();
+		}
 
 		/* parent */
 		f = fdopen(mypipe[0], "r");
