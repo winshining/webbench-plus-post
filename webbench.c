@@ -55,7 +55,7 @@ volatile int timerexpired = 0;
 typedef struct {
 	int speed;
 	int failed;
-	int bytes;
+	long bytes;
 } statistics_t;
 
 typedef struct {
@@ -364,12 +364,6 @@ int main(int argc, char *argv[])
 			goto failed;
 		}
 
-		bench_params.post.file = fopen(bench_params.post.content, "r");
-		if (bench_params.post.file == NULL) {
-			fprintf(stderr, "Error in file open: %s.\n", bench_params.post.content);
-			goto failed;
-		}
-
 		bench_params.post.boundary = (char *)malloc(BOUNDARY_SIZE + 1);
 		if (bench_params.post.boundary == NULL) {
 			fprintf(stderr, "Error in alloc for boundary.\n");
@@ -528,6 +522,9 @@ static int build_special_request(void)
 		if (!bench_params.post.file)
 			sprintf(request + strlen(request), "Content-Length: %ld\r\n", strlen(bench_params.post.content));
 		else {
+			sprintf(request + strlen(request), "Content-Type: %s%s\r\n", POST_MIME_MULTIFORM,
+				bench_params.post.boundary);
+
 			fseek(bench_params.post.file, 0L, SEEK_END);
 
 			cl = 2 + BOUNDARY_SIZE + strlen("\r\n") /* first boundary */
@@ -690,16 +687,11 @@ void build_request(const char *url)
 		strcat(request, "\r\n");
 	}
 
-	if (bench_params.force_reload && bench_params.proxy.proxyhost != NULL) {
+	if (bench_params.force_reload && bench_params.proxy.proxyhost != NULL)
 		strcat(request, "Pragma: no-cache\r\n");
-	}
 
 	if (bench_params.http10 > 1)
 		strcat(request, "Connection: close\r\n");
-
-	if (bench_params.http10 > 1 && bench_params.post.file) {
-		sprintf(request + strlen(request), "Content-Type: %s%s\r\n", POST_MIME_MULTIFORM, bench_params.post.boundary);
-	}
 
 	/* add empty line at end */
 	if (bench_params.http10 > 0 && !bench_params.post.post)
@@ -760,12 +752,20 @@ static int bench(void)
 	
 	if (pid == (pid_t) 0) {
 		/* I am a child */
-		if (build_special_request()) {
-			if (bench_params.proxy.proxyhost == NULL)
-				benchcore(host, bench_params.proxy.proxyport, request);
-			else
-				benchcore(bench_params.proxy.proxyhost, bench_params.proxy.proxyport, request);
-		}
+		do {
+			bench_params.post.file = fopen(bench_params.post.content, "r");
+			if (bench_params.post.file == NULL) {
+				fprintf(stderr, "Error in file open: %s.\n", bench_params.post.content);
+				break;
+			}
+
+			if (build_special_request()) {
+				if (bench_params.proxy.proxyhost == NULL)
+					benchcore(host, bench_params.proxy.proxyport, request);
+				else
+					benchcore(bench_params.proxy.proxyhost, bench_params.proxy.proxyport, request);
+			}
+		} while (0);
 		
 		/* write results to pipe */
 		f = fdopen(mypipe[1], "w");
@@ -775,7 +775,7 @@ static int bench(void)
 		}
 		
 		/* fprintf(stderr, "Child - %d %d\n", speed, failed); */
-		fprintf(f, "%d %d %d\n", statistics.speed, statistics.failed, statistics.bytes);
+		fprintf(f, "%d %d %ld\n", statistics.speed, statistics.failed, statistics.bytes);
 		fclose(f);
 		return 0;
 	} else {
@@ -813,9 +813,9 @@ static int bench(void)
 
 		fclose(f);
 		
-		printf("\nSpeed = %d pages/min, %d bytes/sec.\nRequests: %d susceed, %d failed.\n",
+		printf("\nSpeed = %d pages/min, %ld bytes/sec.\nRequests: %d susceed, %d failed.\n",
 				(int) ((statistics.speed + statistics.failed) / (bench_params.benchtime / 60.0f)),
-				(int) (statistics.bytes / (float) bench_params.benchtime),
+				(long) (statistics.bytes / (float) bench_params.benchtime),
 				statistics.speed,
 				statistics.failed);
 	}
@@ -941,7 +941,6 @@ retry:
 		}
 
 		if (eof) {
-			printf("%ld\n", bench_params.post.offset);
 			/* \r\n--boundary--\r\n */
 			bench_params.post.offset = 0;
 			bzero(request, REQUEST_SIZE);
