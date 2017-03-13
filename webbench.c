@@ -61,6 +61,7 @@ typedef struct {
 typedef struct {
 	int post;
 	FILE *file;
+	long offset;
 	char *boundary;
 	char *content;
 } post_t;
@@ -102,7 +103,7 @@ bench_params_t bench_params = {
 	0,
 	30,
 	{ 80, NULL },
-	{ 0, NULL, NULL, NULL },
+	{ 0, NULL, 0, NULL, NULL },
 	{ 0, NULL, NULL }
 };
 
@@ -693,7 +694,7 @@ void build_request(const char *url)
 		strcat(request, "Pragma: no-cache\r\n");
 	}
 
-	if (bench_params.http10 > 1 && !bench_params.post.file)
+	if (bench_params.http10 > 1)
 		strcat(request, "Connection: close\r\n");
 
 	if (bench_params.http10 > 1 && bench_params.post.file) {
@@ -836,7 +837,7 @@ void benchcore(const char *host, const int port, char *req)
 	int s = 0, i;
 	struct sigaction sa;
 	size_t r;
-	int multipart_first = 0, eof = 0;
+	int multipart_first = 0, eof = 0, reread = 0;
 
 	/* setup alarm signal handler */
 	sa.sa_handler = alarm_handler;
@@ -883,7 +884,6 @@ nexttry:
 			close(s);
 
 			if (bench_params.post.file) {
-				fprintf(stderr, "Error in write, child: %d.\n", getpid());
 				rlen = strlen(multipart_initial);
 				memcpy(req, multipart_initial, rlen);
 				multipart_first = 0;
@@ -899,6 +899,7 @@ nexttry:
 		}
 
 		if (bench_params.post.file && !feof(bench_params.post.file)) {
+retry:
 			r = fread(req, sizeof (char), REQUEST_SIZE, bench_params.post.file);
 			if (r < REQUEST_SIZE) {
 				if (timerexpired) {
@@ -911,33 +912,43 @@ nexttry:
 					clearerr(bench_params.post.file);
 					close_post_file();
 
+					if (reread)
+						break;
+
 					if ((bench_params.post.file = fopen(bench_params.post.content, "r")) == NULL) {
 						fprintf(stderr, "Error in fopen %s, child: %d.\n", bench_params.post.content, getpid());
 						break;
 					}
 
 					/* socket is ok */
-					rlen = strlen(multipart_initial);
-					memcpy(req, multipart_initial, rlen);
-					continue;
+					fseek(bench_params.post.file, bench_params.post.offset, SEEK_CUR);
+					reread = 1;
+					goto retry;
 				} else {
+					reread = 0;
+
 					/* eof */
-					if (feof(bench_params.post.file)) {
+					if (feof(bench_params.post.file))
 						eof = 1;
-					}
 				}
 			}
 
-			rlen = r;
-			continue;
-		} else {
-			if (eof) {
-				/* \r\n--boundary--\r\n */
-				bzero(request, REQUEST_SIZE);
-				sprintf(request, "\r\n--%s--\r\n", bench_params.post.boundary);
-				eof = 0;
+			if (r > 0) {
+				bench_params.post.offset += r;
+				rlen = r;
 				continue;
 			}
+		}
+
+		if (eof) {
+			printf("%ld\n", bench_params.post.offset);
+			/* \r\n--boundary--\r\n */
+			bench_params.post.offset = 0;
+			bzero(request, REQUEST_SIZE);
+			sprintf(request, "\r\n--%s--\r\n", bench_params.post.boundary);
+			rlen = strlen(request);
+			eof = 0;
+			continue;
 		}
 
 		if (bench_params.http10 == 0) {
@@ -953,6 +964,7 @@ nexttry:
 			for ( ;; ) {
 				if (timerexpired)
 					break;
+
 				i = read(s, buf, MAX_BUF_SIZE);
 				/* fprintf(stderr, "%d\n", i); */
 				if (i < 0) {
@@ -964,6 +976,7 @@ nexttry:
 						memcpy(req, multipart_initial, rlen);
 						multipart_first = 0;
 
+						clearerr(bench_params.post.file);
 						fseek(bench_params.post.file, 0L, SEEK_SET);
 					}
 
@@ -979,16 +992,16 @@ nexttry:
 			}
 		}
 
-		if (bench_params.post.file) {
-			rlen = strlen(multipart_initial);
-			memcpy(req, multipart_initial, rlen);
+		rlen = strlen(multipart_initial);
+		memcpy(req, multipart_initial, rlen);
+		multipart_first = 0;
 
-			fseek(bench_params.post.file, 0L, SEEK_SET);
-		} else {
-			if (close(s)) {
-				statistics.failed++;
-				continue;
-			}
+		clearerr(bench_params.post.file);
+		fseek(bench_params.post.file, 0L, SEEK_SET);
+
+		if (close(s)) {
+			statistics.failed++;
+			continue;
 		}
 
 		statistics.speed++;
