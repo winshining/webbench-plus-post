@@ -36,7 +36,7 @@
 
 #define POST_SIZE     1024
 #define REQUEST_SIZE  2048
-#define MAX_BUF_SIZE  1500
+#define MAX_BUF_SIZE  2048
 #define BOUNDARY_SIZE 57
 
 #define POST_MIME_URLENCODED                    "application/x-www-form-urlencoded"
@@ -52,12 +52,13 @@ volatile int timerexpired = 0;
 typedef struct {
 	int speed;
 	int failed;
-	int bytes;
+	long bytes;
 } statistics_t;
 
 typedef struct {
 	int post;
 	FILE *file;
+	long offset;
 	char *boundary;
 	char *content;
 } post_t;
@@ -99,7 +100,7 @@ bench_params_t bench_params = {
 	0,
 	30,
 	{ 80, NULL },
-	{ 0, NULL, NULL, NULL },
+	{ 0, NULL, 0, NULL, NULL },
 	{ 0, NULL, NULL }
 };
 
@@ -131,7 +132,7 @@ static const struct option long_options[] =
 };
 
 /* prototypes */
-static void benchcore(const char* host,const int port, const char *request);
+static void benchcore(const char* host, const int port, char *request);
 static int bench(void);
 static void build_request(const char *url);
 
@@ -239,7 +240,7 @@ int main(int argc, char *argv[])
 		goto failed;
 	}
 
-	while((opt = getopt_long(argc, argv, "912Vfrt:p:c:d:o:?h", long_options, &options_index)) != EOF) {
+	while((opt = getopt_long(argc, argv, "912Vfrt:p:c:d:o:i?h", long_options, &options_index)) != EOF) {
 		switch(opt) {
 			case 0:
 				break;
@@ -360,11 +361,19 @@ int main(int argc, char *argv[])
 			goto failed;
 		}
 
-		bench_params.post.file = fopen(bench_params.post.content, "r");
-		if (bench_params.post.file == NULL) {
-			fprintf(stderr, "Error in file open: %s.\n", bench_params.post.content);
+		bench_params.post.boundary = (char *)malloc(BOUNDARY_SIZE + 1);
+		if (bench_params.post.boundary == NULL) {
+			fprintf(stderr, "Error in alloc for boundary.\n");
 			goto failed;
 		}
+
+		strcat(bench_params.post.boundary, "-------------------------");
+		random_uuid(uuid);
+		snprintf(bench_params.post.boundary + strlen(bench_params.post.boundary), 9, "%s", uuid);
+		snprintf(bench_params.post.boundary + strlen(bench_params.post.boundary), 5, "%s", uuid + 9);
+		snprintf(bench_params.post.boundary + strlen(bench_params.post.boundary), 5, "%s", uuid + 14);
+		snprintf(bench_params.post.boundary + strlen(bench_params.post.boundary), 5, "%s", uuid + 19);
+		snprintf(bench_params.post.boundary + strlen(bench_params.post.boundary), 13, "%s", uuid + 24);
 	} else {
 		if (bench_params.post.post) {
 			for (i = 0; i < bench_params.header.count; i++) {
@@ -420,19 +429,6 @@ int main(int argc, char *argv[])
 	if (!multipart) {
 		printf(" Content-Type: %s", POST_MIME_URLENCODED);
 	} else {
-		bench_params.post.boundary = (char *)malloc(BOUNDARY_SIZE + 1);
-		if (bench_params.post.boundary == NULL) {
-			fprintf(stderr, "Error in alloc for boundary.\n");
-			goto failed;
-		}
-
-		strcat(bench_params.post.boundary, "-------------------------");
-        random_uuid(uuid);
-		snprintf(bench_params.post.boundary + strlen(bench_params.post.boundary), 8, "%s", uuid);
-		snprintf(bench_params.post.boundary + strlen(bench_params.post.boundary), 4, "%s", uuid + 9);
-		snprintf(bench_params.post.boundary + strlen(bench_params.post.boundary), 4, "%s", uuid + 14);
-		snprintf(bench_params.post.boundary + strlen(bench_params.post.boundary), 4, "%s", uuid + 19);
-		snprintf(bench_params.post.boundary + strlen(bench_params.post.boundary), 12, "%s", uuid + 24);
 		printf(" Content-Type: %s%s", POST_MIME_MULTIFORM, bench_params.post.boundary);
 	}
 
@@ -483,10 +479,11 @@ failed:
 	return 2;
 }
 
-void build_special_request(void)
+static int build_special_request(void)
 {
 	int i;
 	long cl;
+	char str[64];
 	header_t *header = &bench_params.header;
 
 	if (header->header) {
@@ -498,9 +495,12 @@ void build_special_request(void)
 		if (!bench_params.post.file)
 			sprintf(request + strlen(request), "Content-Length: %ld\r\n", strlen(bench_params.post.content));
 		else {
+			sprintf(request + strlen(request), "Content-Type: %s%s\r\n", POST_MIME_MULTIFORM,
+				bench_params.post.boundary);
+
 			fseek(bench_params.post.file, 0L, SEEK_END);
 
-			cl = BOUNDARY_SIZE + strlen("\r\n") /* first boundary */
+			cl = 2 + BOUNDARY_SIZE + strlen("\r\n") /* first boundary */
 				+ strlen(POST_CONTENT_DISPOSITION)
 				+ strlen(POST_CONTENT_DISPOSITION_FILENAME_START)
 				+ strlen(bench_params.post.content)
@@ -510,15 +510,19 @@ void build_special_request(void)
 				+ strlen("\r\n\r\n") /* Content-Type in Content-Disposition */
 				+ ftell(bench_params.post.file) /* file length */
 				+ strlen("\r\n")
-				+ BOUNDARY_SIZE
+				+ 2 + BOUNDARY_SIZE
 				+ strlen("--\r\n"); /* last boundary */
 
-			if (strlen(request) + cl >= REQUEST_SIZE) {
-				fprintf(stderr, "Error in request size: %ld, overflowed.\n", strlen(request) + cl);
+			bzero(str, 64);
+			sprintf(str, "%ld", cl);
+
+			if (strlen(request) + strlen("Content-Length: \r\n") + strlen(str) >= REQUEST_SIZE) {
+				fprintf(stderr, "Error in request size: %ld, overflowed.\n",
+					strlen(request) + strlen("Content-Lenght: \r\n") + strlen(str));
 
 				free_header();
 				free_boundary();
-				exit(2);
+				return 0;
 			}
 
 			sprintf(request + strlen(request), "Content-Length: %ld\r\n", cl);
@@ -529,11 +533,22 @@ void build_special_request(void)
 		if (!bench_params.post.file)
 			memcpy(request + strlen(request), bench_params.post.content, strlen(bench_params.post.content));
 		else {
-			;
+			strcat(request, "--");
+			strcat(request, bench_params.post.boundary);
+			strcat(request, "\r\n");
+			strcat(request, POST_CONTENT_DISPOSITION);
+			strcat(request, POST_CONTENT_DISPOSITION_FILENAME_START);
+			strcat(request, bench_params.post.content);
+			strcat(request, POST_CONTENT_DISPOSITION_FILENAME_END);
+			strcat(request, "\r\n");
+			strcat(request, POST_CONTENT_DISPOSITION_CONTENT_TYPE);
+			strcat(request, "\r\n\r\n");
+			/* content\r\n--boundary--\r\n */
 		}
 	}
 
 	free_header();
+	return 1;
 }
 
 void build_request(const char *url)
@@ -645,12 +660,11 @@ void build_request(const char *url)
 		strcat(request, "\r\n");
 	}
 
-	if (bench_params.force_reload && bench_params.proxy.proxyhost != NULL) {
+	if (bench_params.force_reload && bench_params.proxy.proxyhost != NULL)
 		strcat(request, "Pragma: no-cache\r\n");
-	}
 
 	if (bench_params.http10 > 1)
-	    strcat(request, "Connection: close\r\n");
+		strcat(request, "Connection: close\r\n");
 
 	/* add empty line at end */
 	if (bench_params.http10 > 0 && !bench_params.post.post)
@@ -710,13 +724,21 @@ static int bench(void)
 	}
 	
 	if (pid == (pid_t) 0) {
-		build_special_request();
-		
 		/* I am a child */
-		if (bench_params.proxy.proxyhost == NULL)
-			benchcore(host, bench_params.proxy.proxyport, request);
-		else
-			benchcore(bench_params.proxy.proxyhost, bench_params.proxy.proxyport, request);
+		do {
+			bench_params.post.file = fopen(bench_params.post.content, "r");
+			if (bench_params.post.file == NULL) {
+				fprintf(stderr, "Error in file open: %s.\n", bench_params.post.content);
+				break;
+			}
+
+			if (build_special_request()) {
+				if (bench_params.proxy.proxyhost == NULL)
+					benchcore(host, bench_params.proxy.proxyport, request);
+				else
+					benchcore(bench_params.proxy.proxyhost, bench_params.proxy.proxyport, request);
+			}
+		} while (0);
 		
 		/* write results to pipe */
 		f = fdopen(mypipe[1], "w");
@@ -726,7 +748,7 @@ static int bench(void)
 		}
 		
 		/* fprintf(stderr, "Child - %d %d\n", speed, failed); */
-		fprintf(f, "%d %d %d\n", statistics.speed, statistics.failed, statistics.bytes);
+		fprintf(f, "%d %d %ld\n", statistics.speed, statistics.failed, statistics.bytes);
 		fclose(f);
 		return 0;
 	} else {
@@ -747,7 +769,7 @@ static int bench(void)
 		statistics.failed = 0;
 		statistics.bytes = 0;
 	
-	    for ( ;; ) {
+		for ( ;; ) {
 			pid = fscanf(f, "%d %d %d", &i, &j, &k);
 			if (pid < 2) {
 				fprintf(stderr, "Some of our childrens died.\n");
@@ -764,9 +786,9 @@ static int bench(void)
 
 		fclose(f);
 		
-		printf("\nSpeed = %d pages/min, %d bytes/sec.\nRequests: %d susceed, %d failed.\n",
+		printf("\nSpeed = %d pages/min, %ld bytes/sec.\nRequests: %d susceed, %d failed.\n",
 				(int) ((statistics.speed + statistics.failed) / (bench_params.benchtime / 60.0f)),
-				(int) (statistics.bytes / (float) bench_params.benchtime),
+				(long) (statistics.bytes / (float) bench_params.benchtime),
 				statistics.speed,
 				statistics.failed);
 	}
@@ -774,12 +796,21 @@ static int bench(void)
 	return i;
 }
 
-void benchcore(const char *host,const int port,const char *req)
+static void close_post_file(void)
+{
+	fclose(bench_params.post.file);
+	bench_params.post.file = NULL;
+}
+
+void benchcore(const char *host, const int port, char *req)
 {
 	int rlen;
 	char buf[MAX_BUF_SIZE];
-	int s, i;
+	char multipart_initial[REQUEST_SIZE];
+	int s = 0, i;
 	struct sigaction sa;
+	size_t r;
+	int multipart_first = 0, eof = 0, reread = 0;
 
 	/* setup alarm signal handler */
 	sa.sa_handler = alarm_handler;
@@ -792,6 +823,12 @@ void benchcore(const char *host,const int port,const char *req)
 	
 	rlen = strlen(req);
 
+	if (bench_params.post.file) {
+		/* for retry */
+		bzero(multipart_initial, REQUEST_SIZE);
+		memcpy(multipart_initial, req, rlen);
+	}
+
 nexttry:
 	for ( ;; ) {
 		if (timerexpired) {
@@ -799,19 +836,90 @@ nexttry:
 				/* fprintf(stderr, "Correcting failed by signal\n"); */
 				statistics.failed--;
 			}
-			
+
+			close_post_file();
 			return;
 		}
 
-		s = Socket(host, port);
-		if (s < 0) {
-			statistics.failed++;
-			continue;
+		if (!multipart_first) {
+			s = Socket(host, port);
+			if (s < 0) {
+				statistics.failed++;
+				continue;
+			}
+
+			if (bench_params.post.file)
+				multipart_first = 1;
 		}
-		
+
 		if (rlen != write(s, req, rlen)) {
 			statistics.failed++;
 			close(s);
+
+			if (bench_params.post.file) {
+				rlen = strlen(multipart_initial);
+				memcpy(req, multipart_initial, rlen);
+				multipart_first = 0;
+
+				fseek(bench_params.post.file, 0L, SEEK_SET);
+			}
+
+			continue;
+		}
+
+		if (bench_params.post.post) {
+			statistics.bytes += rlen;
+		}
+
+		if (bench_params.post.file && !feof(bench_params.post.file)) {
+retry:
+			r = fread(req, sizeof (char), REQUEST_SIZE, bench_params.post.file);
+			if (r < REQUEST_SIZE) {
+				if (timerexpired) {
+					close_post_file();
+					continue;
+				}
+
+				if (ferror(bench_params.post.file)) {
+					fprintf(stderr, "Error in fread, child: %d.\n", getpid());
+					clearerr(bench_params.post.file);
+					close_post_file();
+
+					if (reread)
+						break;
+
+					if ((bench_params.post.file = fopen(bench_params.post.content, "r")) == NULL) {
+						fprintf(stderr, "Error in fopen %s, child: %d.\n", bench_params.post.content, getpid());
+						break;
+					}
+
+					/* socket is ok */
+					fseek(bench_params.post.file, bench_params.post.offset, SEEK_CUR);
+					reread = 1;
+					goto retry;
+				} else {
+					reread = 0;
+
+					/* eof */
+					if (feof(bench_params.post.file))
+						eof = 1;
+				}
+			}
+
+			if (r > 0) {
+				bench_params.post.offset += r;
+				rlen = r;
+				continue;
+			}
+		}
+
+		if (eof) {
+			/* \r\n--boundary--\r\n */
+			bench_params.post.offset = 0;
+			bzero(request, REQUEST_SIZE);
+			sprintf(request, "\r\n--%s--\r\n", bench_params.post.boundary);
+			rlen = strlen(request);
+			eof = 0;
 			continue;
 		}
 
@@ -822,27 +930,47 @@ nexttry:
 				continue;
 			}
 		}
-		
+
 		if (bench_params.force == 0) {
 			/* read all available data from socket */
 			for ( ;; ) {
 				if (timerexpired)
 					break;
+
 				i = read(s, buf, MAX_BUF_SIZE);
 				/* fprintf(stderr, "%d\n", i); */
 				if (i < 0) {
 					statistics.failed++;
 					close(s);
+
+					if (bench_params.post.file) {
+						rlen = strlen(multipart_initial);
+						memcpy(req, multipart_initial, rlen);
+						multipart_first = 0;
+
+						clearerr(bench_params.post.file);
+						fseek(bench_params.post.file, 0L, SEEK_SET);
+					}
+
 					goto nexttry;
 				} else {
 					if (i == 0)
 						break;
-					else
-						statistics.bytes += i;
+					else {
+						if (!bench_params.post.post)
+							statistics.bytes += i;
+					}
 				}
 			}
 		}
-		
+
+		rlen = strlen(multipart_initial);
+		memcpy(req, multipart_initial, rlen);
+		multipart_first = 0;
+
+		clearerr(bench_params.post.file);
+		fseek(bench_params.post.file, 0L, SEEK_SET);
+
 		if (close(s)) {
 			statistics.failed++;
 			continue;
