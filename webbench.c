@@ -60,6 +60,7 @@ typedef struct {
 
 typedef struct {
 	int post;
+	int in_file;
 	FILE *file;
 	long offset;
 	char *boundary;
@@ -103,7 +104,7 @@ bench_params_t bench_params = {
 	0,
 	30,
 	{ 80, NULL },
-	{ 0, NULL, 0, NULL, NULL },
+	{ 0, 0, NULL, 0, NULL, NULL },
 	{ 0, NULL, NULL }
 };
 
@@ -234,7 +235,6 @@ int main(int argc, char *argv[])
 	int opt = 0;
 	int i, header_count = 0;
 	int options_index = 0;
-	int multipart = 0;
 	char uuid[UUID_SIZE + 1];
 	char *tmp = NULL;
 	
@@ -344,7 +344,7 @@ int main(int argc, char *argv[])
 				bench_params.post.content = optarg;
 				break;
 			case 'i':
-				multipart = 1;
+				bench_params.post.in_file = 1;
 		}
 	}
 
@@ -354,7 +354,7 @@ int main(int argc, char *argv[])
 		goto failed;
 	}
 
-	if (multipart) {
+	if (bench_params.post.in_file) {
 		if (!bench_params.post.post) {
 			fprintf(stderr, "Error in option -i|--file: --post not specified.\n");
 			goto failed;
@@ -424,10 +424,12 @@ int main(int argc, char *argv[])
 	build_request(argv[optind]);
 	printf(" %s", argv[optind]);
 
-	if (!multipart)
-		printf(" Content-Type: %s", POST_MIME_URLENCODED);
-	else
-		printf(" Content-Type: %s%s", POST_MIME_MULTIFORM, bench_params.post.boundary);
+	if (bench_params.post.post) {
+		if (!bench_params.post.in_file)
+			printf(" Content-Type: %s", POST_MIME_URLENCODED);
+		else
+			printf(" Content-Type: %s%s", POST_MIME_MULTIFORM, bench_params.post.boundary);
+	}
 
 	switch(bench_params.http10) {
 		case 0:
@@ -509,7 +511,7 @@ static int build_special_request(void)
 	}
 
 	if (bench_params.post.post) {
-		if (!bench_params.post.file)
+		if (!bench_params.post.in_file)
 			sprintf(request + strlen(request), "Content-Length: %ld\r\n", strlen(bench_params.post.content));
 		else {
 			sprintf(request + strlen(request), "Content-Type: %s%s\r\n", POST_MIME_MULTIFORM, bench_params.post.boundary);
@@ -546,7 +548,7 @@ static int build_special_request(void)
 		}
 
 		strcat(request, "\r\n");
-		if (!bench_params.post.file)
+		if (!bench_params.post.in_file)
 			memcpy(request + strlen(request), bench_params.post.content, strlen(bench_params.post.content));
 		else {
 			strcat(request, "--");
@@ -742,10 +744,12 @@ static int bench(void)
 	if (pid == (pid_t) 0) {
 		/* I am a child */
 		do {
-			bench_params.post.file = fopen(bench_params.post.content, "r");
-			if (bench_params.post.file == NULL) {
-				fprintf(stderr, "Error in file open: %s.\n", bench_params.post.content);
-				break;
+			if (bench_params.post.post && bench_params.post.in_file) {
+				bench_params.post.file = fopen(bench_params.post.content, "r");
+				if (bench_params.post.file == NULL) {
+					fprintf(stderr, "Error in file open: %s.\n", bench_params.post.content);
+					break;
+				}
 			}
 
 			if (build_special_request()) {
@@ -768,7 +772,7 @@ static int bench(void)
 		fclose(f);
 		return 0;
 	} else {
-		if (i == bench_params.clients){
+		if (i == bench_params.clients) {
 			free_header();
 			free_boundary();
 		}
@@ -814,8 +818,10 @@ static int bench(void)
 
 static void close_post_file(void)
 {
-	fclose(bench_params.post.file);
-	bench_params.post.file = NULL;
+	if (bench_params.post.file) {
+		fclose(bench_params.post.file);
+		bench_params.post.file = NULL;
+	}
 }
 
 void benchcore(const char *host, const int port, char *req)
@@ -839,7 +845,7 @@ void benchcore(const char *host, const int port, char *req)
 	
 	rlen = strlen(req);
 
-	if (bench_params.post.file) {
+	if (bench_params.post.in_file) {
 		/* for retry */
 		bzero(multipart_initial, REQUEST_SIZE);
 		memcpy(multipart_initial, req, rlen);
@@ -864,7 +870,7 @@ nexttry:
 				continue;
 			}
 
-			if (bench_params.post.file)
+			if (bench_params.post.in_file)
 				multipart_first = 1;
 		}
 
@@ -872,7 +878,7 @@ nexttry:
 			statistics.failed++;
 			close(s);
 
-			if (bench_params.post.file) {
+			if (bench_params.post.in_file) {
 				rlen = strlen(multipart_initial);
 				memcpy(req, multipart_initial, rlen);
 				multipart_first = 0;
@@ -887,7 +893,7 @@ nexttry:
 			statistics.bytes += rlen;
 		}
 
-		if (bench_params.post.file && !feof(bench_params.post.file)) {
+		if (bench_params.post.in_file && !feof(bench_params.post.file)) {
 retry:
 			r = fread(req, sizeof (char), REQUEST_SIZE, bench_params.post.file);
 			if (r < REQUEST_SIZE) {
@@ -959,7 +965,7 @@ retry:
 					statistics.failed++;
 					close(s);
 
-					if (bench_params.post.file) {
+					if (bench_params.post.in_file) {
 						rlen = strlen(multipart_initial);
 						memcpy(req, multipart_initial, rlen);
 						multipart_first = 0;
@@ -980,12 +986,14 @@ retry:
 			}
 		}
 
-		rlen = strlen(multipart_initial);
-		memcpy(req, multipart_initial, rlen);
-		multipart_first = 0;
+		if (bench_params.post.in_file) {
+			rlen = strlen(multipart_initial);
+			memcpy(req, multipart_initial, rlen);
+			multipart_first = 0;
 
-		clearerr(bench_params.post.file);
-		fseek(bench_params.post.file, 0L, SEEK_SET);
+			clearerr(bench_params.post.file);
+			fseek(bench_params.post.file, 0L, SEEK_SET);
+		}
 
 		if (close(s)) {
 			statistics.failed++;
