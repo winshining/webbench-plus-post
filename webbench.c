@@ -381,8 +381,7 @@ int main(int argc, char *argv[])
 				header_count++;
 
 				if (!init_header(header_count)) {
-					fprintf(stderr, "Error in option --header %s: Alloc for header failed.\n",
-							POST_MIME_URLENCODED);
+					fprintf(stderr, "Error in option --header %s: Alloc for header failed.\n", POST_MIME_URLENCODED);
 					goto failed;
 				}
 
@@ -490,8 +489,7 @@ static int build_special_request(void)
 		if (!bench_params.post.file)
 			sprintf(request + strlen(request), "Content-Length: %ld\r\n", strlen(bench_params.post.content));
 		else {
-			sprintf(request + strlen(request), "Content-Type: %s%s\r\n", POST_MIME_MULTIFORM,
-				bench_params.post.boundary);
+			sprintf(request + strlen(request), "Content-Type: %s%s\r\n", POST_MIME_MULTIFORM, bench_params.post.boundary);
 
 			fseek(bench_params.post.file, 0L, SEEK_END);
 
@@ -577,13 +575,13 @@ void build_request(const char *url)
 		case METHOD_HEAD:
 			strcpy(request, "HEAD");
 			break;
-	    case METHOD_OPTIONS:
+		case METHOD_OPTIONS:
 			strcpy(request, "OPTIONS");
 			break;
-	    case METHOD_TRACE:
+		case METHOD_TRACE:
 			strcpy(request, "TRACE");
 			break;
-	    case METHOD_POST:
+		case METHOD_POST:
 			strcpy(request, "POST");
 			break;
 	}
@@ -629,9 +627,9 @@ void build_request(const char *url)
 			bench_params.proxy.proxyport = atoi(tmp);
 			if (bench_params.proxy.proxyport == 0)
 				bench_params.proxy.proxyport = 80;
-		} else {
+		} else
 			strncpy(host, url + i, strcspn(url + i, "/"));
-		}
+
 		// printf("Host = %s\n", host);
 		strcat(request + strlen(request), url + i + strcspn(url + i, "/"));
 	} else {
@@ -782,10 +780,10 @@ static int bench(void)
 		fclose(f);
 		
 		printf("\nSpeed = %d pages/min, %ld bytes/sec.\nRequests: %d susceed, %d failed.\n",
-				(int) ((statistics.speed + statistics.failed) / (bench_params.benchtime / 60.0f)),
-				(long) (statistics.bytes / (float) bench_params.benchtime),
-				statistics.speed,
-				statistics.failed);
+			(int) ((statistics.speed + statistics.failed) / (bench_params.benchtime / 60.0f)),
+			(long) (statistics.bytes / (float) bench_params.benchtime),
+			statistics.speed,
+			statistics.failed);
 	}
 
 	return i;
