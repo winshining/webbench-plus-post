@@ -264,18 +264,16 @@ int main(int argc, char *argv[])
 				exit(0);
 			case 't':
 				bench_params.benchtime = atoi(optarg);
-				if (bench_params.benchtime <= 0) {
+				if (bench_params.benchtime <= 0)
 					fprintf(stderr, "Warning in option --time %s: Invalid value, defaults to 30.\n", optarg);
-				}
 
 				break;
 			case 'p':
 				/* proxy server parsing server:port */
 				tmp = strrchr(optarg, ':');
 				bench_params.proxy.proxyhost = optarg;
-				if(tmp == NULL) {
+				if(tmp == NULL)
 					break;
-				}
 
 				if(tmp == optarg) {
 					fprintf(stderr, "Error in option --proxy %s: Missing hostname.\n", optarg);
@@ -289,9 +287,8 @@ int main(int argc, char *argv[])
 
 				*tmp = '\0';
 				bench_params.proxy.proxyport = atoi(tmp + 1);
-				if (bench_params.proxy.proxyport <= 0) {
+				if (bench_params.proxy.proxyport <= 0)
 					fprintf(stderr, "Warning in option --proxy %s: Invalid proxy port, defaults to 80.\n", optarg);
-				}
 
 				break;
 			case ':':
@@ -301,9 +298,8 @@ int main(int argc, char *argv[])
 				goto failed;
 			case 'c':
 				bench_params.clients = atoi(optarg);
-				if (bench_params.clients <= 0) {
+				if (bench_params.clients <= 0)
 					fprintf(stderr, "Warning in option --clients %s: Invalid clients, defaults to 1.\n", optarg);
-				}
 
 				break;
 			case 'd':
@@ -357,7 +353,7 @@ int main(int argc, char *argv[])
 
 	if (multipart) {
 		if (!bench_params.post.post) {
-			fprintf(stderr, "Error in option -i|--file: --pos not specified.\n");
+			fprintf(stderr, "Error in option -i|--file: --post not specified.\n");
 			goto failed;
 		}
 
@@ -426,17 +422,16 @@ int main(int argc, char *argv[])
 	build_request(argv[optind]);
 	printf(" %s", argv[optind]);
 
-	if (!multipart) {
+	if (!multipart)
 		printf(" Content-Type: %s", POST_MIME_URLENCODED);
-	} else {
+	else
 		printf(" Content-Type: %s%s", POST_MIME_MULTIFORM, bench_params.post.boundary);
-	}
 
 	switch(bench_params.http10) {
 		case 0:
 			printf(" (using HTTP/0.9)");
 			break;
-	    case 2:
+		case 2:
 			printf(" (using HTTP/1.1)");
 			break;
 	}
@@ -752,7 +747,7 @@ static int bench(void)
 		fclose(f);
 		return 0;
 	} else {
-		if (i == bench_params.clients){
+		if (i == bench_params.clients) {
 			free_header();
 			free_boundary();
 		}
