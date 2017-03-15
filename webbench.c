@@ -566,9 +566,14 @@ void build_request(const char *url)
 	if (bench_params.method == METHOD_TRACE && bench_params.http10 < 2)
 		bench_params.http10 = 2;
 
-	if (bench_params.method == METHOD_POST && bench_params.http10 < 2)
-		bench_params.http10 = 2;
-	
+        if (bench_params.method == METHOD_POST && bench_params.http10 < 2) {
+                /* rfc1867 was published in 1995, http 1.0 was published in 1982. */
+                if (bench_params.post.in_file)
+                        bench_params.http10 = 2;
+                else
+                        bench_params.http10 = 1;
+        }
+
 	switch (bench_params.method) {
 		default:
 		case METHOD_GET:
