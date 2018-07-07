@@ -8,9 +8,9 @@ Usage:
 
 1.Content-Type: application/x-www-form-urlencoded
 
-webbench --post content --header header1:value1 --header header2:header2 -t time -c number http://host/url
+webbench --post content --header header1:value1 --header header2:value2 -t time -c number http://host/url
 
 2.Content-Type: multipart/form-data; boundary=random_bytes_or_numbers
 
-webbench --post filename --file --header header1:value1 --header header2:header2 -t time -c number http://host/url
+webbench --post filename --file --header header1:value1 --header header2:value2 -t time -c number http://host/url
 
