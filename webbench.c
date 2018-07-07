@@ -183,7 +183,7 @@ static int init_header(int count)
 
 	if (header->count) {
 		if (count <= header->count) {
-			fprintf(stderr, "Warning in init_header: count not larger than bench_params.heade.count.");
+			fprintf(stderr, "Warning in init_header: count not larger than bench_params.header.count.");
 			return header->count;
 		}
 
@@ -193,17 +193,17 @@ static int init_header(int count)
 	header->count = count;
 
 	if (!new_add)
-		header->header = (char **)malloc(header->count);
+		header->header = (char **)malloc(header->count * sizeof(char *));
 	else
-		header->header = (char **)realloc(header->header, header->count);
+		header->header = (char **)realloc(header->header, header->count * sizeof(char *));
 
 	if (header->header == NULL)
 		return 0;
 
 	if (!new_add)
-		header->header_value = (char **)malloc(header->count);
+		header->header_value = (char **)malloc(header->count * sizeof(char *));
 	else
-		header->header_value = (char **)realloc(header->header_value, header->count);
+		header->header_value = (char **)realloc(header->header_value, header->count * sizeof(char *));
 
 	if (header->header_value == NULL) {
 		if (!new_add)
